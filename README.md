@@ -47,7 +47,7 @@ Once these scripts and servicemenu are installed, you will be able to right clic
 
 *****
 
-x265 transcode is the most elaborate part of these scripts, by far.  If you select this, it will create a Transcode directory, a transcode queue, add this file, and launch a transcode process with nice -19.  All output will be in the Transcode directory.  You will end up with a transcoded file and a transcode log.
+x265 transcode is the most elaborate part of these scripts, by far.  If you select this, it will create a Transcode directory, a transcode queue, add this file, and launch a transcode process with nice -19.  All output will be in the Transcode directory.  You can add more videos to the queue while it's transcoding.  They will be processed in FIFO.  You will end up with files and a transcode log in ~/Transcode.
 
 To adjust transcode parameters, edit ~/.config/videokit.conf.  I will add more detail on how to configure this over time but it should be reasonably self explanitory.  Notice, you can configure different settings for different quality levels and you can define the quality levels based on the lines of resolution of the source.
 
