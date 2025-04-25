@@ -28,7 +28,7 @@ This package is available as an [AUR package](https://aur.archlinux.org/) for Ar
 
 To install manually:
 
-```bash
+On bash:
 git clone https://github.com/TomB16/VideoKit-KDE.git
 cd VideoKit-KDE
 makepkg -si
@@ -78,3 +78,5 @@ Future development:
 
 This will always be a simple system with a focus on speed of both transcode and UI.  MKVToolNix takes a long time to load and even to unload, on my system.  This is essentially instant.  If you need something elaborate, use MKVToolNix and/or Handbrake.  I still use both of these utilities on rare occasion but they seem slow and bloated now that I'm used to videokit-kde.
 
+
+[screenshot](https://github.com/TomB16/VideoKit-KDE/blob/master/Screenshot1.png)
