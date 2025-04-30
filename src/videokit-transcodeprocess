@@ -111,7 +111,7 @@ do
 		TIME_END=$(date '+%Y%m%d %H%M%S')
 		SECONDS_END=$(    date '+%s')
 		(( TIME_ELAPSED = SECONDS_END - SECONDS_START ))
-		ELAPSED=$( VideoKit-KDE-S2HMS "$TIME_ELAPSED" )
+		ELAPSED=$( videokit-s2hms "$TIME_ELAPSED" )
 
 		TRANS_FPS=$(awk "BEGIN { printf \"%.2f\", $VID_FRAMES / $TIME_ELAPSED }")
 		MESSAGE="Transcode Start: $TIME_START  End: $TIME_END  Transcode time: $ELAPSED  Duration: $VID_DURATION  Lines: $VID_LINES  fps: $TRANS_FPS  File: $VID_FILENAME"
@@ -136,7 +136,7 @@ do
 
 	# permanently remove the processed item from queue
 
-	/usr/bin/VideoKit/VideoKit-KDE-TranscodeQueue pull
+	videokit-transcodequeue pull
 
 
 	# loop forever but sleep while queue empty
