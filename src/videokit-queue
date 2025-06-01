@@ -30,13 +30,6 @@
 
 ENTRY="${@:3}"
 
-echo "queue"
-echo $1
-echo $2
-echo $ENTRY
-echo "end queue"
-
-
 
 case "$1" in
 	push)

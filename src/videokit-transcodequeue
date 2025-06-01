@@ -41,9 +41,6 @@ LOCK=$(      videokit-config TRANSCODE LOCK );            LOCK="${LOCK%\"}";    
 DEBUG=$(     videokit-config TRANSCODE DEBUG );
 
 
-echo "$1"
-echo "$2"
-
 # queue operations
 
 case "$1" in

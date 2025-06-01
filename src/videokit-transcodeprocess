@@ -99,6 +99,9 @@ do
 	VID_FILENAME=$( videokit-transcodequeue look )
 	VID_FILENAME="${VID_FILENAME%"${VID_FILENAME##*[![:space:]]}"}"
 
+	[ "$DEBUG" ] && echo "debug:  queue entry -> $VID_FILENAME"
+
+
 
 	# process queue entry
 
