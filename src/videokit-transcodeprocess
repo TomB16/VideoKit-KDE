@@ -1,0 +1,224 @@
+#!/bin/bash
+#
+# VideoKit-KDE - A set of video utilities for KDE, extending Dolphin.
+#       - videokit-transcodeprocess
+#
+# Author:  Tom Brown (https://github.com/TomB16)
+# License: MIT License
+# Contact: tom@CarlsonSpeed.com
+#
+# Copyright (c) 2025 Tom Brown
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+
+
+# source utility package
+
+source bashkit-cpu
+source bashkit-string
+
+
+# transcode queue params
+
+echo $( basename "$0" )
+
+DIRECTORY=$(  videokit-config TRANSCODE DIRECTORY );	DIRECTORY=$(string::strip_quotes "$DIRECTORY");		DIRECTORY="${DIRECTORY/#~/$HOME}";
+QUEUE=$(      videokit-config TRANSCODE QUEUE );		QUEUE=$(string::strip_quotes "$QUEUE");				QUEUE=$DIRECTORY/$QUEUE;
+LOG=$(        videokit-config TRANSCODE LOG );			LOG=$(string::strip_quotes "$LOG");					LOG=$DIRECTORY/$LOG;
+LOG_FORMAT=$( videokit-config TRANSCODE LOG_FORMAT );
+MAX_EMPTY=$(  videokit-config TRANSCODE MAX_EMPTY )
+WATCH_FREQUENCY=$(  videokit-config TRANSCODE WATCH_FREQUENCY )
+WATCH_TEMPERATURE=$(  videokit-config TRANSCODE WATCH_TEMPERATURE )
+
+LOCK=$(       videokit-config TRANSCODE LOCK );			LOCK=$(string::strip_quotes "$LOCK");				LOCK=$XDG_RUNTIME_DIR/$LOCK;
+
+DEBUG=$(      videokit-config TRANSCODE DEBUG );
+
+
+if [ "$DEBUG" ]; then
+
+	echo "debug:  Directory         = $DIRECTORY"
+	echo "debug:  Queue             = $QUEUE"
+	echo "debug:  Lock              = $LOCK"
+	echo "debug:  Log               = $LOG"
+	echo "debug:  Log format        = $LOG_FORMAT"
+	echo "debug:  Watch frequency   = $WATCH_FREQUENCY"
+	echo "debug:  Watch temperature = $WATCH_TEMPERATURE"
+
+fi
+
+
+# validate log format
+
+if ! [[ "$LOG_FORMAT" =~ ^(LOG|CSV|TSV)$ ]]; then
+  echo "error: invalid log format in config file" >&2
+  exit 1
+fi
+
+
+# create the transcode path, as necessary
+
+if [[ -z "$DIRECTORY" ]]; then mkdir -p "$DIRECTORY" ; fi
+
+
+# check for other running transcodes
+
+eval "exec 200>\"$LOCK\""
+if flock -n 200 ; then
+	if [ "$DEBUG" ]; then	echo "debug:  Process lock aquired";	fi
+else
+	echo "videokit-transcodeprocess is already running." 
+	exit 1 
+fi
+
+
+# processing loop
+
+SLEEP=0
+EMPTY=0
+while [ "$EMPTY" -lt "$MAX_EMPTY" ]
+do
+	# pull transcode request from queue
+
+	VID_FILENAME=$( videokit-transcodequeue look )
+	VID_FILENAME="${VID_FILENAME%"${VID_FILENAME##*[![:space:]]}"}"
+
+
+	# process queue entry
+
+	if [[ -f "$VID_FILENAME" ]] ; then
+
+		SLEEP=0
+		EMPTY=0
+		VID_FRAMES=$(    mediainfo --Inform="Video;%FrameCount%" "$VID_FILENAME" | awk 'NF' )
+		VID_DURATION=$(  mediainfo --Inform="General;%Duration%" "$VID_FILENAME" | awk '{ms=$1; hours=int(ms/3600000); ms%=3600000; minutes=int(ms/60000); ms%=60000; seconds=int(ms/1000); printf("%02d:%02d:%02d\n", hours, minutes, seconds)}' )
+		TIME_START=$(    date '+%Y%m%d %H%M%S' )
+		SECONDS_START=$( date '+%s' )
+
+
+		# fetch the number of lines in the file
+
+	    VID_LINES=$( mediainfo --Inform="Video;%Height%" "$VID_FILENAME" )
+		if [ "$DEBUG" ]; then	echo "debug:  Lines      = $VID_LINES";		fi
+
+
+		# monitor CPU performance, if requested
+
+		CPU_FREQ_SEM=/tmp/cpu_frequecy_watcher.sem
+		CPU_FREQ_RESULT=/tmp/cpu_frequecy_watcher.result
+
+		CPU_TEMP_SEM=/tmp/cpu_temperature_watcher.sem
+		CPU_TEMP_RESULT=/tmp/cpu_temperature_watcher.result
+
+		if [ "$DEBUG" ]; then	echo "debug:  starting cpu::frequency_watcher_start   5 $CPU_FREQ_SEM $CPU_FREQ_RESULT";		fi
+		if [ "$DEBUG" ]; then	echo "debug:  starting cpu::temperature_watcher_start 5 $CPU_TEMP_SEM $CPU_TEMP_RESULT";		fi
+
+		cpu::frequency_watcher_start 5 "$CPU_FREQ_SEM" "$CPU_FREQ_RESULT"
+		cpu::temperature_watcher_start 5 "$CPU_TEMP_SEM" "$CPU_TEMP_RESULT"
+
+
+		# transcode
+
+		if [ "$DEBUG" ]; then	echo "debug:  Queue entry= $VID_FILENAME";	fi
+		videokit-transcodefile "$VID_FILENAME"
+		RESULT=$?
+
+
+		# collect CPU metrics
+
+		CPU_FREQ=$(cpu::frequency_watcher_stop "$CPU_FREQ_SEM" "$CPU_FREQ_RESULT")
+		if [ "$DEBUG" ]; then	echo "debug:  CPU frequency = $CPU_FREQ";		fi
+
+		CPU_TEMP=$(cpu::temperature_watcher_stop "$CPU_TEMP_SEM" "$CPU_TEMP_RESULT")
+		if [ "$DEBUG" ]; then	echo "debug:  CPU temperature = $CPU_TEMP";		fi
+
+
+		# format the result
+
+		TIME_END=$(date '+%Y%m%d %H%M%S')
+		SECONDS_END=$(    date '+%s')
+		(( TIME_ELAPSED = SECONDS_END - SECONDS_START ))
+		TRANSCODE_TIME=$( videokit-s2hms "$TIME_ELAPSED" )
+
+		TRANS_FPS=$(awk "BEGIN { printf \"%.2f\", $VID_FRAMES / $TIME_ELAPSED }")
+
+
+		# create log file
+
+		if   [[ "$LOG_FORMAT" == "CSV" && ! -f "$LOG" ]]; then
+			echo "Status,Time Start,Time End,Transcode Time,Video Duration,Video Lines,Transcode FPS,CPU Freq, CPU Temp, Filename" > $LOG
+		elif [[ "$LOG_FORMAT" == "TSV" && ! -f "$LOG" ]]; then
+			echo $'Status\tTime Start\tTime End\tTranscode Time\tVideo Duration\tVideo Lines\tTranscode FPS\tCPU Freq\tCPU Temp\tFilename' > "$LOG"
+
+		fi
+
+
+		# log file format
+
+		if [ "$LOG_FORMAT" == "LOG" ]; then
+			STATUS=$([ "$RESULT" -eq 0 ] && echo "[OK]" || echo "[FAIL]")
+			MESSAGE="$STATUS  Transcode Start: $TIME_START  End: $TIME_END  Transcode time: $TRANSCODE_TIME  Duration: $VID_DURATION  Lines: $VID_LINES  fps: $TRANS_FPS  CPU Freq: $CPU_FREQ  CPU Temp: $CPU_TEMP  File: $VID_FILENAME"
+		elif [ "$LOG_FORMAT" == "CSV" ]; then
+			STATUS=$([ "$RESULT" -eq 0 ] && echo "OK" || echo "FAIL")
+			MESSAGE="$STATUS,$TIME_START,$TIME_END,$TRANSCODE_TIME,$VID_DURATION,$VID_LINES,$TRANS_FPS,$CPU_FREQ,$CPU_TEMP,$VID_FILENAME"
+		elif [ "$LOG_FORMAT" == "TSV" ]; then
+			STATUS=$([ "$RESULT" -eq 0 ] && echo "OK" || echo "FAIL")
+			printf -v MESSAGE "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s" "$STATUS" "$TIME_START" "$TIME_END" "$TRANSCODE_TIME" "$VID_DURATION" "$VID_LINES" "$TRANS_FPS" "CPU Freq" "CPU Temp" "$VID_FILENAME"
+		fi
+        echo "$MESSAGE" >> "$LOG"
+
+
+		# log and post notification to kde message center
+
+		MESSAGE="$STATUS  Lines: $VID_LINES  fps: $TRANS_FPS  File: $VID_FILENAME"
+
+		notify-send -a TranscodeProcessor -h "string:desktop-entry:org.kde.konsole" "Transcode Queue Processor" "$MESSAGE"
+
+	else
+
+		TMP=$((EMPTY++))
+		if [ "$DEBUG" ]; then	                  echo "debug:  Empty = $EMPTY";  fi
+
+
+	fi
+
+
+	# permanently remove the processed item from queue
+
+	videokit-transcodequeue pull >/dev/null
+
+
+	# loop forever but sleep while queue empty
+
+	if [[ "$EMPTY" -gt 0 ]]; then
+		if [ "$SLEEP" -eq "0" ] ; then 	SLEEP=1;  echo "info:  Queue empty.";		  fi
+		if [ "$DEBUG" ]; then	                  echo "debug:  Queue empty.  Sleeping";  fi
+		sleep 10
+	fi
+
+done
+
+
+# remove lock file on the way out
+
+if [    "$DEBUG" ];	then echo "Debug:  Process lock withdrawn";	fi
+if [ -f "$LOCK"  ];	then rm "$LOCK";  				fi
+if [ -f "$QUEUE" ];	then rm "$QUEUE";  				fi
+
+

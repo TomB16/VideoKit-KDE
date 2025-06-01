@@ -1,0 +1,16 @@
+
+Subject:  I just pushed a lightweight KDE specific wrapper for ffmpeg transcode into the AUR
+
+
+I'm posting this in case a KDE user with access to the Arch User Repository has a similar workflow to mine and is interested in testing.  I've been using this for months.  The UI is way, way faster to use than Handbrake and MKVToolNix but it doesn't replace these tools.
+The system is an extremely lightweight wrapper written in BASH.  The heavy lifting is done with ffmpeg and a couple of other tools.  It's just a CLI wrapper.  It runs at user level.  No root access required, other than to install.
+It transcodes to x265 only but it would be easily possible to modify the config to target whatever you like.  ffmpeg params can be configured in the config file.  Different compression levels can be configured for different lines of resolution.  I have mine set up to compress SD video more than higher resolutions.
+It squeezes video and copies audio.  I will probably add an audio compression option in time but the goal will always be to have the most simple system possible with a UI that operates with a couple of clicks.  I can highlight dozens of files, right click, and send them to the transcode queue, all in a second or two.  Transcoding takes considerably longer but I do other things while that happens.
+It creates a decent log in the transcode target directory that shows lines of resolution, fps, etc.
+It can make subtitles neither forced nor default with one click.  Handbrake has a bug that forces subtitles.  It's quite annoying.  This feature fixes the subtitle issue quickly with one click.
+The title changes should be obvious. but they are documented a bit on the github.
+The entire system consists of 9 batch files, one service menu definition, and a config file.  There are no compiled binaries in this package.....   yet.  Dead simple.
+I've been using this for months but just uploaded a package to AUR a couple of days ago so you would be a beta tester.  Please notice, it removes cleanly.  I'm open to problems, ideas, and suggestions.
+github project -> https://github.com/TomB16/VideoKit-KDE
+arch install -> yay -S videokit-kde
+Note:  Please don't flame me.  I'm trying to make the world a better place.
