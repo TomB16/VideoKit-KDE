@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="black" stroke-width="0.75" stroke-linejoin="round" stroke-linecap="round">
+    <!-- Outer rectangle filled light gray -->
+    <rect x="2" y="2" width="12" height="12" rx="1" ry="1" fill="#d3d3d3" stroke="black" stroke-width="0.75"/>
+
+    <!-- Left perforations -->
+    <rect x="2.5" y="3.5" width="1.2" height="1.2" fill="black"/>
+    <rect x="2.5" y="6.5" width="1.2" height="1.2" fill="black"/>
+    <rect x="2.5" y="9.5" width="1.2" height="1.2" fill="black"/>
+    <rect x="2.5" y="12.5" width="1.2" height="1.2" fill="black"/>
+
+    <!-- Right perforations -->
+    <rect x="12.3" y="3.5" width="1.2" height="1.2" fill="black"/>
+    <rect x="12.3" y="6.5" width="1.2" height="1.2" fill="black"/>
+    <rect x="12.3" y="9.5" width="1.2" height="1.2" fill="black"/>
+    <rect x="12.3" y="12.5" width="1.2" height="1.2" fill="black"/>
+</svg>

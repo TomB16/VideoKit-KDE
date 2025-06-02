@@ -7,6 +7,7 @@
 Type=Service
 ServiceTypes=KonqPopupMenu/Plugin,video/*
 MimeType=video/*;
+Icon=videokit
 X-KDE-Priority=TopLevel
 X-KDE-Submenu=VideoKit
 Actions=VideoKit-KDE-TranscodeQueuePush;VideoKit-KDE-TranscodeQueueSecond;VideoKit-KDE-NoForcedSubs;VideoKit-KDE-File2Title;VideoKit-KDE-Title2File
@@ -15,14 +16,14 @@ Actions=VideoKit-KDE-TranscodeQueuePush;VideoKit-KDE-TranscodeQueueSecond;VideoK
 Name=1 Queue for x265 transcode
 TryExec=videokit-transcodequeue
 Exec=videokit-transcodequeue push "%f"
-Icon=circular-arrow-shape
+Icon=transcode
 Terminal=true
 
 [Desktop Action VideoKit-KDE-TranscodeQueueSecond]
 Name=2 Queue for next x265 transcode
 TryExec=videokit-transcodequeue
 Exec=videokit-transcodequeue second "%f"
-Icon=circular-arrow-shape
+Icon=transcode
 Terminal=true
 
 [Desktop Action VideoKit-KDE-NoForcedSubs]

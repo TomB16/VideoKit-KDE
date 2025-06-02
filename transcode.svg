@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="16" height="16" fill="none" stroke="black" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Circle background -->
+    <circle cx="32" cy="32" r="30" fill="none" stroke="black" stroke-width="3"/>
+
+    <!-- Circular arrows -->
+    <path d="M14 32a18 18 0 0 1 18-18" fill="none" stroke="black" stroke-width="5" />
+    <polygon points="29,12 32,6 35,12" fill="black"/>
+
+    <path d="M50 32a18 18 0 0 1 -18 18" fill="none" stroke="black" stroke-width="5" />
+    <polygon points="35,52 32,58 29,52" fill="black"/>
+
+    <!-- Smaller play triangle -->
+    <polygon points="30,26 30,38 40,32" fill="black"/>
+</svg>
