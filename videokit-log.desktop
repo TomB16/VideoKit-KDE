@@ -1,0 +1,20 @@
+#
+# VideoKit-servicemenu.desktop
+#
+#
+
+[Desktop Entry]
+Type=Service
+ServiceTypes=KonqPopupMenu/Plugin
+MimeType=text/plain;text/csv
+Icon=videokit
+X-KDE-Priority=TopLevel
+X-KDE-Submenu=VideoKit
+Actions=VideoKit-KDE-LogAnon
+
+[Desktop Action VideoKit-KDE-LogAnon]
+Name=Anonymize Log
+TryExec=videokit-anon
+Exec=videokit-anon
+Icon=Icon=view-hidden
+Terminal=true

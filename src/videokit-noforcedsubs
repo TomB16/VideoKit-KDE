@@ -1,50 +1,53 @@
 #!/bin/bash
+
 #
-# VideoKit-KDE - A set of video utilities for KDE, extending Dolphin.
-#       - videokit-noforcedsubs
+# This file is part of videokit-kde.
+# Copyright (C) 2025 Tom Brown
 #
-# Author:  Tom Brown (https://github.com/TomB16)
-# License: MIT License
-# Contact: tom@CarlsonSpeed.com
+# videokit-kde is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
 #
-# Copyright (c) 2025 Tom Brown
+# videokit-kde is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
 #
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-# THE SOFTWARE.
 
 
-# transcode queue params
+# masthead
 
-echo $( basename "$0" )
+source bashdev-app
 
-DIRECTORY=$( videokit-config TRANSCODE DIRECTORY );       DIRECTORY="${DIRECTORY//\~/$HOME}";     DIRECTORY="${DIRECTORY%\"}";    DIRECTORY="${DIRECTORY#\"}"
-TOLERANCE=$( videokit-config FILE2TITLE TOLERANCE )
+APP_NAME=$(basename "$0")
+APP_VERSION=0.3.0
+APP_AUTHOR="Tom Brown"
+APP_YEAR="2025"
+APP_LICENSE="GPLv3"
+APP_DESC="Remove forced and default subtitle flags (subtitles are preserved but do not display by default)"
 
-LOCK=$(      videokit-config TRANSCODE LOCK );            LOCK="${LOCK%\"}";                      LOCK="${LOCK#\"}";              LOCK=$XDG_RUNTIME_DIR"/"$LOCK;
-
-DEBUG=$(     videokit-config TRANSCODE DEBUG );
+app::masthead "$APP_NAME" "$APP_VERSION" "$APP_AUTHOR" "$APP_YEAR" "$APP_LICENSE" "$APP_DESC"
 
 
-if [ "$DEBUG" ]; then
+# needed for config information
 
-        echo "Debug:  Debugging =" $DEBUG
-        echo "Debug:  Lock file =" $LOCK
-        echo "Debug:  Tolerance =" $TOLERANCE
+source videokit-lib
+
+
+# load videokit config from config file
+
+videokit::configLoad
+
+
+if [[ "$NO_FORCED_SUBS_DEBUG" == "true" ]]; then
+
+        echo "debug: debugging = $NO_FORCED_SUBS_DEBUG"
+        echo "debug: lock file = $NO_FORCED_SUBS_LOCK"
+        echo "debug: tolerance = $NO_FORCED_SUBS_TOLERANCE"
 
 fi
 
@@ -52,15 +55,15 @@ fi
 # decision tree
 
 RUN=true
+INPUT_FILE="$1"
 
 
 # check for file exists
 
-if [ -z "$1" ]; then
+if [ -z "$INPUT_FILE" ]; then
     echo
     echo "Error: No file specified."
     echo
-    echo "Usage: $0 <video_file.mkv>"
     RUN=false
 fi
 
@@ -69,11 +72,11 @@ fi
 
 if "$RUN"; then
 
-	SUBS=$(ffprobe -v error -select_streams s -show_entries stream=index:stream_tags=language:stream_disposition=default,forced -of json "$1" | jq '.streams[] | select(.disposition.default == 1 or .disposition.forced == 1) | {index, language: .tags.language, default: .disposition.default, forced: .disposition.forced}')
+	SUBS=$(ffprobe -v error -select_streams s -show_entries stream=index:stream_tags=language:stream_disposition=default,forced -of json "$INPUT_FILE" | jq '.streams[] | select(.disposition.default == 1 or .disposition.forced == 1) | {index, language: .tags.language, default: .disposition.default, forced: .disposition.forced}')
 
 	if [[ -z "$SUBS" ]]; then
 		RUN=false;
-		echo "Info:  No forced or default subtitles in: " $1
+		echo "info:  no forced or default subtitles in: " $1
 	fi
 
 fi
@@ -83,41 +86,13 @@ fi
 
 if "$RUN"; then
 
+	# spinlock to serialize multiple execution
 
-# check for other running instances
-
-	# serialize this script to prevent massive parallel launch
-
-	MAX_WAIT=300
-	WAIT_INTERVAL=5
-	ELAPSED=0
-
-
-	# loop until process lock aquired
-
-	while true; do
-
-		eval "exec 201>\"$LOCK\""
-		if flock -n 201; then
-		       	if [ "$DEBUG" ]; then  echo "Debug:  Lock aquired.";  fi
-			break
-		else
-			if [ "$ELAPSED" -ge "$MAX_WAIT" ]; then
-				echo "Lock timeout."
-				rm $LOCKFILE
-				exit 1
-			fi
-			echo "Waiting for seralized execution"
-			sleep $WAIT_INTERVAL
-			((ELAPSED+=WAIT_INTERVAL))
-		fi
-
-	done
+	app::processLockSpin $(basename "$0") 201
 
 
 	# parse the filename
 
-	INPUT_FILE="$1"
 	FILENAME="${INPUT_FILE%.*}"
 	EXTENSION="${INPUT_FILE##*.}"
 	TARGET_FILE=$FILENAME"_no_forced_subs_."$EXTENSION
@@ -125,7 +100,8 @@ if "$RUN"; then
 
 	# strip the forced and default sub flags
 
-	ffmpeg -i "$INPUT_FILE" -map 0 -c copy -disposition:s forced -disposition:s none -y "$TARGET_FILE"
+	echo "info:  stripping subtitles from [$INPUT_FILE]"
+	systemd-inhibit --why="Strip subtitles" nice -n 19 ffmpeg -loglevel error -hide_banner -i "$INPUT_FILE" -map 0 -c copy -disposition:s forced -disposition:s none -y "$TARGET_FILE" >/dev/null 2>&1
 
 
 	# action on result
@@ -137,8 +113,8 @@ if "$RUN"; then
 
 		DIFF=$(( $TARGET_SIZE - $INPUT_SIZE ))
 
-		if [ "${DIFF#-}" -le "$TOLERANCE" ]; then  mv "$TARGET_FILE" "$INPUT_FILE";	
-		else					   echo "Error:  Difference $DIFF between input and target is greater than tolerance $TOLERANCE."
+		if [ "${DIFF#-}" -le "$NO_FORCED_SUBS_TOLERANCE" ]; then mv "$TARGET_FILE" "$INPUT_FILE"
+		else					   				  			echo "error: difference $DIFF between input and target is greater than tolerance $NO_FORCED_SUBS_TOLERANCE"
 		fi
 
 	fi
@@ -146,8 +122,6 @@ if "$RUN"; then
 fi
 
 
-# remove lock file on the way out
+# clean up
 
-if [ "$DEBUG" ];                then echo "Debug:  Process lock withdrawn";     fi
-if [ -f "$LOCK" ];              then rm "$LOCK";                                fi
-
+app::processUnlock

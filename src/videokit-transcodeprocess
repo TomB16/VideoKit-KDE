@@ -1,106 +1,96 @@
 #!/bin/bash
+
 #
-# VideoKit-KDE - A set of video utilities for KDE, extending Dolphin.
-#       - videokit-transcodeprocess
+# This file is part of videokit-kde.
+# Copyright (C) 2025 Tom Brown
 #
-# Author:  Tom Brown (https://github.com/TomB16)
-# License: MIT License
-# Contact: tom@CarlsonSpeed.com
+# videokit-kde is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
 #
-# Copyright (c) 2025 Tom Brown
+# videokit-kde is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
 #
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-# THE SOFTWARE.
+
+
+# masthead
+
+source bashdev-app
+
+APP_NAME=$(basename "$0")
+APP_VERSION=0.3.0
+APP_AUTHOR="Tom Brown"
+APP_YEAR="2025"
+APP_LICENSE="GPLv3"
+APP_DESC="Transcode queue processor"
+
+app::masthead "$APP_NAME" "$APP_VERSION" "$APP_AUTHOR" "$APP_YEAR" "$APP_LICENSE" "$APP_DESC"
+app::processLock $(basename "$0") 200
 
 
 # source utility package
 
-source bashkit-cpu
-source bashkit-string
+source bashdev-cpu
+source bashdev-gpu
+source bashdev-sensor
+source bashdev-string
+
+source videokit-lib
 
 
 # transcode queue params
 
-echo $( basename "$0" )
-
-DIRECTORY=$(  videokit-config TRANSCODE DIRECTORY );	DIRECTORY=$(string::strip_quotes "$DIRECTORY");		DIRECTORY="${DIRECTORY/#~/$HOME}";
-QUEUE=$(      videokit-config TRANSCODE QUEUE );		QUEUE=$(string::strip_quotes "$QUEUE");				QUEUE=$DIRECTORY/$QUEUE;
-LOG=$(        videokit-config TRANSCODE LOG );			LOG=$(string::strip_quotes "$LOG");					LOG=$DIRECTORY/$LOG;
-LOG_FORMAT=$( videokit-config TRANSCODE LOG_FORMAT );
-MAX_EMPTY=$(  videokit-config TRANSCODE MAX_EMPTY )
-WATCH_FREQUENCY=$(  videokit-config TRANSCODE WATCH_FREQUENCY )
-WATCH_TEMPERATURE=$(  videokit-config TRANSCODE WATCH_TEMPERATURE )
-
-LOCK=$(       videokit-config TRANSCODE LOCK );			LOCK=$(string::strip_quotes "$LOCK");				LOCK=$XDG_RUNTIME_DIR/$LOCK;
-
-DEBUG=$(      videokit-config TRANSCODE DEBUG );
+videokit::configLoad
 
 
-if [ "$DEBUG" ]; then
+# debug data
 
-	echo "debug:  Directory         = $DIRECTORY"
-	echo "debug:  Queue             = $QUEUE"
-	echo "debug:  Lock              = $LOCK"
-	echo "debug:  Log               = $LOG"
-	echo "debug:  Log format        = $LOG_FORMAT"
-	echo "debug:  Watch frequency   = $WATCH_FREQUENCY"
-	echo "debug:  Watch temperature = $WATCH_TEMPERATURE"
+if [[ "$TRANSCODE_DEBUG" == "true" ]]; then
+
+	echo "debug: directory             = $TRANSCODE_DIRECTORY"
+	echo "debug: queue                 = $TRANSCODE_QUEUE"
+	echo "debug: lock                  = $TRANSCODE_LOCK"
+	echo "debug: log                   = $TRANSCODE_LOG"
+	echo "debug: log format            = $TRANSCODE_LOG_FORMAT"
+	echo "debug: watch cpu frequency   = $TRANSCODE_WATCH_CPU_FREQUENCY"
+	echo "debug: watch cpu temperature = $TRANSCODE_WATCH_CPU_TEMPERATURE"
+	echo "debug: watch gpu frequency   = $TRANSCODE_WATCH_GPU_FREQUENCY"
+	echo "debug: watch gpu temperature = $TRANSCODE_WATCH_GPU_TEMPERATURE"
+	echo "debug: watch env temperature = $TRANSCODE_WATCH_ENV_TEMPERATURE"
+	echo "debug: watch power           = $TRANSCODE_WATCH_POWER"
 
 fi
 
 
 # validate log format
 
-if ! [[ "$LOG_FORMAT" =~ ^(LOG|CSV|TSV)$ ]]; then
-  echo "error: invalid log format in config file" >&2
-  exit 1
-fi
+[[ $TRANSCODE_LOG_FORMAT =~ ^(LOG|CSV|TSV)$ ]] || { printf >&2 'Error: Invalid log format "%s" (must be LOG, CSV, or TSV)\n' "$TRANSCODE_LOG_FORMAT"; exit 1; }
 
 
 # create the transcode path, as necessary
 
-if [[ -z "$DIRECTORY" ]]; then mkdir -p "$DIRECTORY" ; fi
-
-
-# check for other running transcodes
-
-eval "exec 200>\"$LOCK\""
-if flock -n 200 ; then
-	if [ "$DEBUG" ]; then	echo "debug:  Process lock aquired";	fi
-else
-	echo "videokit-transcodeprocess is already running." 
-	exit 1 
-fi
+[[ -n "$TRANSCODE_DIRECTORY" ]] && mkdir -p -- "$TRANSCODE_DIRECTORY"
 
 
 # processing loop
 
 SLEEP=0
 EMPTY=0
-while [ "$EMPTY" -lt "$MAX_EMPTY" ]
+while [ "$EMPTY" -lt "$TRANSCODE_MAX_EMPTY" ]
 do
+
 	# pull transcode request from queue
 
-	VID_FILENAME=$( videokit-transcodequeue look )
+	VID_FILENAME="$( videokit::queue look $TRANSCODE_QUEUE)"
 	VID_FILENAME="${VID_FILENAME%"${VID_FILENAME##*[![:space:]]}"}"
 
-	[ "$DEBUG" ] && echo "debug:  queue entry -> $VID_FILENAME"
-
+	[[ $TRANSCODE_DEBUG == "true" ]] && echo >&2 "debug: queue entry=$VID_FILENAME"
 
 
 	# process queue entry
@@ -109,110 +99,213 @@ do
 
 		SLEEP=0
 		EMPTY=0
-		VID_FRAMES=$(    mediainfo --Inform="Video;%FrameCount%" "$VID_FILENAME" | awk 'NF' )
+		VID_FRAMES=""
+		for i in {1..5}; do
+			VID_FRAMES=$(mediainfo --Inform="Video;%FrameCount%" "$VID_FILENAME" | awk 'NF')
+			if [[ -n "$VID_FRAMES" ]]; then
+				break
+			fi
+			sleep 0.2
+		done
+
 		VID_DURATION=$(  mediainfo --Inform="General;%Duration%" "$VID_FILENAME" | awk '{ms=$1; hours=int(ms/3600000); ms%=3600000; minutes=int(ms/60000); ms%=60000; seconds=int(ms/1000); printf("%02d:%02d:%02d\n", hours, minutes, seconds)}' )
-		TIME_START=$(    date '+%Y%m%d %H%M%S' )
-		SECONDS_START=$( date '+%s' )
+		VID_SIZE_SOURCE=$( stat -c %s "$VID_FILENAME" )
+		TIME_START="$( date '+%Y-%m-%d %H:%M:%S' )"
+		SECONDS=0
 
 
-		# fetch the number of lines in the file
+		# rotate log, as necessary
 
-	    VID_LINES=$( mediainfo --Inform="Video;%Height%" "$VID_FILENAME" )
-		if [ "$DEBUG" ]; then	echo "debug:  Lines      = $VID_LINES";		fi
+		videokit::logRotateTrigger && videokit::logRotate
+
+
+		# fetch ffmpeg params
+
+		[[ $TRANSCODE_DEBUG == "true" ]] && echo "debug: source=$VID_FILENAME" >&2
+
+		VID_LINES=$( videokit::videoLinesGet "$VID_FILENAME" )
+		videokit::ffmpegParamsGet "$VID_LINES"
+		[[ $TRANSCODE_DEBUG == "true" ]] && echo "debug: ffmpeg params=${FFMPEG_PARAMS[@]}" >&2
+
+
+		# provide some information on the job at hand
+
+		echo "info:  transcode file         $VID_FILENAME"
+		echo "info:  ffmpeg processor       $TRANSCODE_FFMPEG_PROCESSOR"
+		echo "info:  video duration         $VID_DURATION"
+		echo "info:  lines of resolution    $VID_LINES"
+
+
+		# create target file
+
+		FILENAME=$(basename "$VID_FILENAME")
+		FILE="${FILENAME%.*}"
+		EXTENSION="${FILENAME##*.}"
+
+		#VID_OUTPUT="${TRANSCODE_DIRECTORY}/${FILE} (${TRANSCODE_FFMPEG_PROCESSOR} preset ${TRANS_PRESET} Q${TRANS_QUALITY}).${EXTENSION}"
+		VID_OUTPUT="${TRANSCODE_DIRECTORY}/${FILE} (${TRANSCODE_FFMPEG_PROCESSOR}"
+		[[ "$TRANSCODE_FFMPEG_PROCESSOR" == "CPU" ]] && VID_OUTPUT="$VID_OUTPUT preset ${TRANS_PRESET} Q${TRANS_QUALITY}"
+		VID_OUTPUT="$VID_OUTPUT).${EXTENSION}"
+
+
+		# debug
+
+		[[ "$TRANSCODE_DEBUG" == "true" ]] && {
+			echo >&2 "debug: input file size=$VID_SIZE_SOURCE"
+			echo >&2 "debug: output=$VID_OUTPUT"
+			echo >&2 "debug: quality=$TRANS_QUALITY"
+		}
 
 
 		# monitor CPU performance, if requested
 
-		CPU_FREQ_SEM=/tmp/cpu_frequecy_watcher.sem
+		CPU_FREQ_SEM=/tmp/cpu_frequency_watcher.sem
 		CPU_FREQ_RESULT=/tmp/cpu_frequecy_watcher.result
 
 		CPU_TEMP_SEM=/tmp/cpu_temperature_watcher.sem
 		CPU_TEMP_RESULT=/tmp/cpu_temperature_watcher.result
 
-		if [ "$DEBUG" ]; then	echo "debug:  starting cpu::frequency_watcher_start   5 $CPU_FREQ_SEM $CPU_FREQ_RESULT";		fi
-		if [ "$DEBUG" ]; then	echo "debug:  starting cpu::temperature_watcher_start 5 $CPU_TEMP_SEM $CPU_TEMP_RESULT";		fi
+		GPU_FREQ_SEM=/tmp/gpu_frequency_watcher.sem
+		GPU_FREQ_RESULT=/tmp/gpu_frequency_watcher.result
 
-		cpu::frequency_watcher_start 5 "$CPU_FREQ_SEM" "$CPU_FREQ_RESULT"
-		cpu::temperature_watcher_start 5 "$CPU_TEMP_SEM" "$CPU_TEMP_RESULT"
+		GPU_TEMP_SEM=/tmp/gpu_temperature_watcher.sem
+		GPU_TEMP_RESULT=/tmp/gpu_temperature_watcher.result
+
+		ENV_TEMP_SEM=/tmp/env_temperature_watcher.sem
+		ENV_TEMP_RESULT=/tmp/env_temperature_watcher.result
+
+		[[ $TRANSCODE_WATCH_CPU_FREQUENCY   ]] && cpu::frequencyWatcherStart	5  "$CPU_FREQ_SEM" "$CPU_FREQ_RESULT"
+		[[ $TRANSCODE_WATCH_CPU_TEMPERATURE ]] && cpu::temperatureWatcherStart	5  "$CPU_TEMP_SEM" "$CPU_TEMP_RESULT"
+		[[ $TRANSCODE_WATCH_GPU_FREQUENCY   ]] && gpu::frequencyWatcherStart	5  "$GPU_FREQ_SEM" "$GPU_FREQ_RESULT"
+		[[ $TRANSCODE_WATCH_GPU_TEMPERATURE ]] && gpu::temperatureWatcherStart	5  "$GPU_TEMP_SEM" "$GPU_TEMP_RESULT"
+		[[ $TRANSCODE_WATCH_ENV_TEMPERATURE ]] && sensor::envTempWatcherStart	60 "$ENV_TEMP_SEM" "$ENV_TEMP_RESULT"
+		[[ $TRANSCODE_WATCH_POWER ]] 		   && cpu::powerWatcherStart
 
 
 		# transcode
 
-		if [ "$DEBUG" ]; then	echo "debug:  Queue entry= $VID_FILENAME";	fi
-		videokit-transcodefile "$VID_FILENAME"
+		videokit::transcodeFile "$VID_FILENAME" "$VID_OUTPUT" "${FFMPEG_PARAMS[@]}"
 		RESULT=$?
 
 
-		# collect CPU metrics
+		# energy monitor
 
-		CPU_FREQ=$(cpu::frequency_watcher_stop "$CPU_FREQ_SEM" "$CPU_FREQ_RESULT")
-		if [ "$DEBUG" ]; then	echo "debug:  CPU frequency = $CPU_FREQ";		fi
-
-		CPU_TEMP=$(cpu::temperature_watcher_stop "$CPU_TEMP_SEM" "$CPU_TEMP_RESULT")
-		if [ "$DEBUG" ]; then	echo "debug:  CPU temperature = $CPU_TEMP";		fi
+		CPU_POWER_W=$( cpu::powerWatcherStop )
 
 
 		# format the result
 
-		TIME_END=$(date '+%Y%m%d %H%M%S')
-		SECONDS_END=$(    date '+%s')
-		(( TIME_ELAPSED = SECONDS_END - SECONDS_START ))
-		TRANSCODE_TIME=$( videokit-s2hms "$TIME_ELAPSED" )
+		TIME_END=$(date '+%Y-%m-%d %H:%M:%S')
+		echo >&2 "info: average CPU power (W)=$CPU_POWER_W"
+		TRANSCODE_TIME=$(string::seconds2hhmmss $SECONDS)
+		TRANS_FPS=$(awk "BEGIN { printf \"%.2f\", ($VID_FRAMES / $SECONDS) }")
 
-		TRANS_FPS=$(awk "BEGIN { printf \"%.2f\", $VID_FRAMES / $TIME_ELAPSED }")
+
+
+		# collect watched metrics
+
+		CPU_FREQ="N/A";		[[ $TRANSCODE_WATCH_CPU_FREQUENCY   ]] && CPU_FREQ=$( cpu::frequencyWatcherStop		"$CPU_FREQ_SEM" "$CPU_FREQ_RESULT" )
+		CPU_TEMP="N/A";		[[ $TRANSCODE_WATCH_CPU_TEMPERATURE ]] && CPU_TEMP=$( cpu::temperatureWatcherStop	"$CPU_TEMP_SEM" "$CPU_TEMP_RESULT" )
+		GPU_FREQ="N/A";		[[ $TRANSCODE_WATCH_GPU_FREQUENCY   ]] && GPU_FREQ=$( gpu::frequencyWatcherStop		"$GPU_FREQ_SEM" "$GPU_FREQ_RESULT" )
+		GPU_TEMP="N/A";		[[ $TRANSCODE_WATCH_GPU_TEMPERATURE ]] && GPU_TEMP=$( gpu::temperatureWatcherStop	"$GPU_TEMP_SEM" "$GPU_TEMP_RESULT" )
+		ENV_TEMP="N/A";		[[ $TRANSCODE_WATCH_ENV_TEMPERATURE ]] && ENV_TEMP=$( sensor::envTempWatcherStop	"$ENV_TEMP_SEM" "$ENV_TEMP_RESULT" )
+		[ -f "/tmp/ffmpeg.progress" ] && rm "/tmp/ffmpeg.progress"
+
+
+		# get output file size
+
+		for i in {1..5}; do
+			if [[ -f "$VID_OUTPUT" ]]; then
+				VID_SIZE_DESTINATION=$( stat -c %s "$VID_OUTPUT" )
+				break
+			else
+				sleep 0.2
+			fi
+		done
+
+
+		# If still blank after retries
+
+		if [[ -z "$VID_SIZE_DESTINATION" ]]; then
+			VID_SIZE_DESTINATION="N/A"
+		elif [[ "$TRANSCODE_DEBUG" == "true" ]]; then
+			echo >&2 "debug: output file size=$VID_SIZE_DESTINATION"
+		fi
+		[[ ! -z "$VID_SIZE_DESTINATION" ]] && echo >&2 "info:  compression ratio=$(awk 'BEGIN {printf "%.2f", '"$VID_SIZE_SOURCE"' / '"$VID_SIZE_DESTINATION"'}')"
 
 
 		# create log file
+		# "Status,Start,End,Transcode Time,Video Duration,Frames,Lines,Source Size (bytes),Destination Size (bytes),CPU Freq (Hz),CPU Temp (°C),GPU Freq (MHz),GPU Temp (°C),Encoder,Avg CPU Power (W),Env Temp (°C),Filename,Parameters" > "$TRANSCODE_LOG"
 
-		if   [[ "$LOG_FORMAT" == "CSV" && ! -f "$LOG" ]]; then
-			echo "Status,Time Start,Time End,Transcode Time,Video Duration,Video Lines,Transcode FPS,CPU Freq, CPU Temp, Filename" > $LOG
-		elif [[ "$LOG_FORMAT" == "TSV" && ! -f "$LOG" ]]; then
-			echo $'Status\tTime Start\tTime End\tTranscode Time\tVideo Duration\tVideo Lines\tTranscode FPS\tCPU Freq\tCPU Temp\tFilename' > "$LOG"
 
+		if [[ "$TRANSCODE_LOG_FORMAT" == "CSV" && ! -f "$TRANSCODE_LOG" ]]; then
+
+			echo "Status,Start,End,Transcode Time,Video Duration,Frames,Lines,Source Size (bytes),Destination Size (bytes),CPU Freq (Hz),CPU Temp (°C),GPU Freq (MHz),GPU Temp (°C),Encoder,Avg CPU Power (W),Env Temp (°C),Filename,Parameters" > "$TRANSCODE_LOG"
+
+		elif [[ "$TRANSCODE_LOG_FORMAT" == "TSV" && ! -f "$TRANSCODE_LOG" ]]; then
+			echo -e "Status\tTime Start\tTime End\tTranscode Time\tVideo Duration\tFrames\tLines\tSource Size (bytes)\tDestination Size (bytes)\tCPU Freq\tCPU Temp\tGPU Freq\tGPU Temp\tEncoder\tAvg CPU Power (W)\tEnv Temp\tFilename\tParameters" > "$TRANSCODE_LOG"
 		fi
 
 
-		# log file format
+		# log message
+		# "Status,Start,End,Transcode Time,Video Duration,Frames,Lines,Source Size (bytes),Destination Size (bytes),CPU Freq (Hz),CPU Temp (°C),GPU Freq (MHz),GPU Temp (°C),Encoder,Avg CPU Power (W),Env Temp (°C),Filename,Parameters" > "$TRANSCODE_LOG"
 
-		if [ "$LOG_FORMAT" == "LOG" ]; then
+		if [[ "$TRANSCODE_LOG_FORMAT" == "LOG" ]]; then
+
 			STATUS=$([ "$RESULT" -eq 0 ] && echo "[OK]" || echo "[FAIL]")
-			MESSAGE="$STATUS  Transcode Start: $TIME_START  End: $TIME_END  Transcode time: $TRANSCODE_TIME  Duration: $VID_DURATION  Lines: $VID_LINES  fps: $TRANS_FPS  CPU Freq: $CPU_FREQ  CPU Temp: $CPU_TEMP  File: $VID_FILENAME"
-		elif [ "$LOG_FORMAT" == "CSV" ]; then
+			MESSAGE="$STATUS  Transcode Start: $TIME_START  End: $TIME_END  Transcode time: $TRANSCODE_TIME  Duration: $VID_DURATION  Frames: $VID_FRAMES  Lines: $VID_LINES  Source Size: $VID_SIZE_SOURCE  Destination Size: $VID_SIZE_DESTINATION  CPU Freq: $CPU_FREQ  CPU Temp: $CPU_TEMP  GPU Freq: $GPU_FREQ  GPU Temp: $GPU_TEMP  Encoder: $TRANSCODE_FFMPEG_PROCESSOR  Ave CPU Power (W): $CPU_POWER_W  Env Temp: $ENV_TEMP  File: $VID_FILENAME  Parameters: ${FFMPEG_PARAMS[*]}" >> "$TRANSCODE_LOG"
+
+		elif [[ "$TRANSCODE_LOG_FORMAT" == "CSV" ]]; then
+
 			STATUS=$([ "$RESULT" -eq 0 ] && echo "OK" || echo "FAIL")
-			MESSAGE="$STATUS,$TIME_START,$TIME_END,$TRANSCODE_TIME,$VID_DURATION,$VID_LINES,$TRANS_FPS,$CPU_FREQ,$CPU_TEMP,$VID_FILENAME"
-		elif [ "$LOG_FORMAT" == "TSV" ]; then
+			PARAMS_ESCAPED=$(printf '%s ' "${FFMPEG_PARAMS[@]}")
+			PARAMS_ESCAPED="${PARAMS_ESCAPED%" "}"
+
+			MESSAGE="$STATUS,$TIME_START,$TIME_END,$TRANSCODE_TIME,$VID_DURATION,$VID_FRAMES,$VID_LINES,$VID_SIZE_SOURCE,$VID_SIZE_DESTINATION,$CPU_FREQ,$CPU_TEMP,$GPU_FREQ,$GPU_TEMP,$TRANSCODE_FFMPEG_PROCESSOR,$CPU_POWER_W,$ENV_TEMP,$VID_FILENAME,\"$PARAMS_ESCAPED\"" >> "$TRANSCODE_LOG"
+
+
+		elif [[ "$TRANSCODE_LOG_FORMAT" == "TSV" ]]; then
+
 			STATUS=$([ "$RESULT" -eq 0 ] && echo "OK" || echo "FAIL")
-			printf -v MESSAGE "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s" "$STATUS" "$TIME_START" "$TIME_END" "$TRANSCODE_TIME" "$VID_DURATION" "$VID_LINES" "$TRANS_FPS" "CPU Freq" "CPU Temp" "$VID_FILENAME"
+			PARAMS_ESCAPED=$(printf '%s ' "${FFMPEG_PARAMS[@]}")
+			PARAMS_ESCAPED="${PARAMS_ESCAPED%" "}"
+
+			printf -v MESSAGE "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s" \
+				"$STATUS" "$TIME_START" "$TIME_END" "$TRANSCODE_TIME" "$VID_DURATION" "$VID_FRAMES" "$VID_LINES" "$VID_SIZE_SOURCE" "$VID_SIZE_DESTINATION" \
+				"$CPU_FREQ" "$CPU_TEMP" "$GPU_FREQ" "$GPU_TEMP" "$TRANSCODE_FFMPEG_PROCESSOR" "$CPU_POWER_W" "$ENV_TEMP" "$VID_FILENAME" "$PARAMS_ESCAPED" >> "$TRANSCODE_LOG"
+
 		fi
-        echo "$MESSAGE" >> "$LOG"
+		echo "$MESSAGE" >> "$TRANSCODE_LOG"
 
 
 		# log and post notification to kde message center
 
 		MESSAGE="$STATUS  Lines: $VID_LINES  fps: $TRANS_FPS  File: $VID_FILENAME"
-
 		notify-send -a TranscodeProcessor -h "string:desktop-entry:org.kde.konsole" "Transcode Queue Processor" "$MESSAGE"
 
 	else
 
-		TMP=$((EMPTY++))
-		if [ "$DEBUG" ]; then	                  echo "debug:  Empty = $EMPTY";  fi
-
+		((EMPTY++))
+		[[ "$TRANSCODE_DEBUG" == "true" ]] && echo >&2 "debug: empty=$EMPTY"
 
 	fi
 
 
 	# permanently remove the processed item from queue
 
-	videokit-transcodequeue pull >/dev/null
+	videokit::queue pull "$TRANSCODE_QUEUE" >/dev/null
 
 
 	# loop forever but sleep while queue empty
 
 	if [[ "$EMPTY" -gt 0 ]]; then
-		if [ "$SLEEP" -eq "0" ] ; then 	SLEEP=1;  echo "info:  Queue empty.";		  fi
-		if [ "$DEBUG" ]; then	                  echo "debug:  Queue empty.  Sleeping";  fi
+	{
+		if   [[ "$SLEEP" -eq "0"   ]]; then
+			SLEEP=1
+			echo "info:  queue empty...  sleeping"
+		fi
 		sleep 10
+	}
 	fi
 
 done
@@ -220,8 +313,5 @@ done
 
 # remove lock file on the way out
 
-if [    "$DEBUG" ];	then echo "Debug:  Process lock withdrawn";	fi
-if [ -f "$LOCK"  ];	then rm "$LOCK";  				fi
-if [ -f "$QUEUE" ];	then rm "$QUEUE";  				fi
-
-
+[[ -f $TRANSCODE_QUEUE ]]	&& rm -- "$TRANSCODE_QUEUE"
+app::processUnlock

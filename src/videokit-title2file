@@ -1,110 +1,83 @@
 #!/bin/bash
+
 #
-# VideoKit-KDE - A set of video utilities for KDE, extending Dolphin.
-#       - videokit-title2file
+# This file is part of videokit-kde.
+# Copyright (C) 2025 Tom Brown
 #
-# Author:  Tom Brown (https://github.com/TomB16)
-# License: MIT License
-# Contact: tom@CarlsonSpeed.com
+# videokit-kde is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
 #
-# Copyright (c) 2025 Tom Brown
+# videokit-kde is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
 #
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-# THE SOFTWARE.
+
+
+# masthead
+
+source bashdev-app
+
+APP_NAME=$(basename "$0")
+APP_VERSION=0.3.0
+APP_AUTHOR="Tom Brown"
+APP_YEAR="2025"
+APP_LICENSE="GPLv3"
+APP_DESC="Rename file to video title meta data"
+
+app::masthead "$APP_NAME" "$APP_VERSION" "$APP_AUTHOR" "$APP_YEAR" "$APP_LICENSE" "$APP_DESC"
 
 
 # transcode queue params
 
-echo $( basename "$0" )
+source videokit-lib
 
-DIRECTORY=$( videokit-config TRANSCODE DIRECTORY );       DIRECTORY="${DIRECTORY//\~/$HOME}";     DIRECTORY="${DIRECTORY%\"}";    DIRECTORY="${DIRECTORY#\"}"
-
-LOCK=$(      videokit-config TRANSCODE LOCK );            LOCK="${LOCK%\"}";                      LOCK="${LOCK#\"}";              LOCK=$XDG_RUNTIME_DIR"/"$LOCK;
-
-DEBUG=$(     videokit-config TRANSCODE DEBUG );
+videokit::configLoad
 
 
-if [ "$DEBUG" ]; then
+if [[ "$TITLE2FILE_DEBUG" == "true" ]]; then
 
-        echo "Debug:  Debugging =" $DEBUG
-        echo "Debug:  Lock file =" $LOCK
+        echo "debug:  $TITLE2FILE_DEBUG"
+        echo "debug:  Lock file =" $TITLE2FILE_LOCK
 
 fi
-
-
-# decision tree
-
-RUN=true
 
 
 # check for file exists
 
-if [ -z "$1" ]; then
-    echo
-    echo "Error: No file specified."
-    echo
-    echo "Usage: $0 <video_file.mkv>"
-    RUN=false
-fi
+INPUT_FILE="$1"
+TITLE=$( mediainfo --Inform="General;%Title%" "$INPUT_FILE" )
+if [ -z "$INPUT_FILE" ]; then
 
+    echo "error:   No file specified"
 
-# strip default and forced subtitle flags from video 
+elif [ ! -f "$INPUT_FILE" ]; then
 
-if "$RUN"; then
+    echo "error:   input file [$INPUT_FILE] not found"
 
-	# serialize this script to prevent massive parallel launch
+elif [[ -z "$TITLE" ]]; then
 
-	MAX_WAIT=300
-	WAIT_INTERVAL=5
-	ELAPSED=0
+	echo "error:  file $INPUT_FILE does not have a metadata title"
 
+else
 
-	# loop until process lock aquired
+	# spinlock to serialize multiple execution
 
-	while true; do
-
-		eval "exec 203>\"$LOCK\""
-		if flock -n 203; then
-		       	if [ "$DEBUG" ]; then  echo "Debug:  Lock aquired.";  fi
-			break
-		else
-			if [ "$ELAPSED" -ge "$MAX_WAIT" ]; then
-				echo "Lock timeout."
-				rm $LOCKFILE
-				exit 1
-			fi
-			echo "Waiting for seralized execution"
-			sleep $WAIT_INTERVAL
-			((ELAPSED+=WAIT_INTERVAL))
-		fi
-
-	done
+	app::processLockSpin $(basename "$0") 203
 
 
 	# parse the filename
 
-	INPUT_FILE="$1"
-	FPATH=$( dirname "$1" )
+	FPATH=$( dirname "$INPUT_FILE" )
 	FILENAME="${INPUT_FILE%.*}"
 	EXTENSION="${INPUT_FILE##*.}"
-        TITLE=$( mediainfo --Inform="General;%Title%" "$INPUT_FILE" )
 
-	if [ "$DEBUG" ]; then
+	if [[ "$TITLE2FILE_DEBUG" == "true" ]]; then
 
 		echo "Debug:  source    = $INPUT_FILE"
 		echo "Debug:  path      = $FPATH"
@@ -114,21 +87,19 @@ if "$RUN"; then
 
 	fi
 
-	TARGET_FILE=$FPATH"/"$TITLE"."$EXTENSION
+	TARGET_FILE="$FPATH/$TITLE.$EXTENSION"
 
-	if [ "$DEBUG" ]; then
+	[[ "$TITLE2FILE_DEBUG" == "true" ]]   && echo "debug:  target     = $TARGET_FILE"
+	if [[ "$INPUT_FILE" != "$TARGET_FILE" ]]; then
 
-		echo "Debug:  target     = $TARGET"
+		echo "info:   rename [$INPUT_FILE] to [$TARGET_FILE]"
+		mv "$INPUT_FILE" "$TARGET_FILE"
 
 	fi
-
-	if [ "$INPUT_FILE" != "$TARGET_FILE" ]; then mv "$INPUT_FILE" "$TARGET_FILE";	fi
 
 fi
 
 
-# remove lock file on the way out
+# clean up
 
-if [ "$DEBUG" ]; then		echo "Debug:  Process lock withdrawn";  fi
-if [ -f "$LOCK" ]; then		rm "$LOCK";  fi
-
+app::processUnlock

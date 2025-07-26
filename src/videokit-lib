@@ -1,0 +1,582 @@
+#!/bin/bash
+
+#
+# This file is part of videokit-kde.
+# Copyright (C) 2025 Tom Brown
+#
+# videokit-kde is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# videokit-kde is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+
+
+# source utility package
+
+[[ -n "${__VIDEOKIT_LIB_SH__}" ]] && return ; readonly __VIDEOKIT_LIB_SH__=1
+
+
+source bashdev-gpu
+source bashdev-video
+source bashdev-system
+source bashdev-string
+
+
+# configs
+
+CONFIG_GLOBAL="/usr/share/videokit/videokit.conf"
+CONFIG_LOCAL="~/.config/videokit.conf"
+CONFIG_LOCAL="${CONFIG_LOCAL//\~/$HOME}"
+
+#DEBUG_LOG="/home/tom/Transcode/debug.log"
+
+
+# configuration
+
+videokit::configLoad() {
+
+	# transcode
+
+	TRANSCODE_LOCK=$(       videokit::configVar TRANSCODE LOCK );			TRANSCODE_LOCK="$XDG_RUNTIME_DIR/$TRANSCODE_LOCK"
+	TRANSCODE_DEBUG=$(      videokit::configVar TRANSCODE DEBUG );			TRANSCODE_DEBUG="${TRANSCODE_DEBUG:-false}"
+
+	TRANSCODE_DIRECTORY=$(  videokit::configVar TRANSCODE DIRECTORY );		TRANSCODE_DIRECTORY="${TRANSCODE_DIRECTORY/#~/$HOME}"
+	TRANSCODE_QUEUE=$(      videokit::configVar TRANSCODE QUEUE );			TRANSCODE_QUEUE="$TRANSCODE_DIRECTORY/$TRANSCODE_QUEUE"
+
+	TRANSCODE_LOG=$(        videokit::configVar TRANSCODE LOG );			TRANSCODE_LOG="$TRANSCODE_DIRECTORY/$TRANSCODE_LOG"
+	TRANSCODE_LOG_FORMAT=$( videokit::configVar TRANSCODE LOG_FORMAT );		TRANSCODE_LOG_FORMAT="${TRANSCODE_LOG_FORMAT:-"CSV"}"
+	TRANSCODE_LOG_ROTATE_POLICY=$( videokit::configVar TRANSCODE LOG_ROTATE_POLICY )
+																			TRANSCODE_LOG_ROTATE_POLICY="${TRANSCODE_LOG_ROTATE_POLICY:-monthly}"
+																			TRANSCODE_LOG_ROTATE_POLICY="${TRANSCODE_LOG_ROTATE_POLICY,,}"
+	TRANSCODE_MAX_EMPTY=$(  videokit::configVar TRANSCODE MAX_EMPTY )
+
+	TRANSCODE_WATCH_CPU_FREQUENCY=$(  	videokit::configVar TRANSCODE WATCH_CPU_FREQUENCY   2>/dev/null );		TRANSCODE_WATCH_CPU_FREQUENCY=${TRANSCODE_WATCH_CPU_FREQUENCY:=false}
+	TRANSCODE_WATCH_CPU_TEMPERATURE=$(  videokit::configVar TRANSCODE WATCH_CPU_TEMPERATURE 2>/dev/null );		TRANSCODE_WATCH_CPU_TEMPERATURE=${TRANSCODE_WATCH_CPU_TEMPERATURE:=false}
+	TRANSCODE_WATCH_GPU_FREQUENCY=$(  	videokit::configVar TRANSCODE WATCH_GPU_FREQUENCY   2>/dev/null );		TRANSCODE_WATCH_GPU_FREQUENCY=${TRANSCODE_WATCH_GPU_FREQUENCY:=false}
+	TRANSCODE_WATCH_GPU_TEMPERATURE=$(  videokit::configVar TRANSCODE WATCH_GPU_TEMPERATURE 2>/dev/null );		TRANSCODE_WATCH_GPU_TEMPERATURE=${TRANSCODE_WATCH_GPU_TEMPERATURE:=false}
+	TRANSCODE_WATCH_SYS_ENERGY=$(  		videokit::configVar TRANSCODE WATCH_SYS_ENERGY		2>/dev/null );		TRANSCODE_WATCH_SYS_ENERGY=${TRANSCODE_WATCH_SYS_ENERGY:=false}
+	TRANSCODE_WATCH_ENV_TEMPERATURE=$(  videokit::configVar TRANSCODE WATCH_ENV_TEMPERATURE 2>/dev/null );		TRANSCODE_WATCH_ENV_TEMPERATURE=${TRANSCODE_WATCH_ENV_TEMPERATURE:=false}
+	TRANSCODE_WATCH_POWER=$(			videokit::configVar TRANSCODE WATCH_POWER			2>/dev/null );		TRANSCODE_WATCH_POWER=${TRANSCODE_WATCH_POWER:=false}
+
+	TRANSCODE_FFMPEG_PROCESSOR=$(  videokit::configVar TRANSCODE FFMPEG_PROCESSOR   2>/dev/null );		TRANSCODE_FFMPEG_PROCESSOR=${TRANSCODE_FFMPEG_PROCESSOR:=CPU};			TRANSCODE_FFMPEG_PROCESSOR=${TRANSCODE_FFMPEG_PROCESSOR^^}
+	TRANSCODE_FFMPEG_PARAMS_CPU=$( videokit::configVar TRANSCODE FFMPEG_PARAMS_CPU )
+	TRANSCODE_FFMPEG_PARAMS_AMD_GPU=$( videokit::configVar TRANSCODE FFMPEG_PARAMS_AMD_GPU )
+	TRANSCODE_FFMPEG_PARAMS_NVIDIA_GPU=$( videokit::configVar TRANSCODE FFMPEG_PARAMS_NVIDIA_GPU )
+	TRANSCODE_FFMPEG_PARAMS_INTEL_GPU=$( videokit::configVar TRANSCODE FFMPEG_PARAMS_INTEL_GPU )
+
+
+	# check ffmpeg processor
+
+	if [ "$TRANSCODE_FFMPEG_PROCESSOR" == "GPU" ] && [ "$(gpu::supportEncodeHEVC)" != "true" ]; then
+		echo "error: GPU transcode not supported on this system [suggest:  yay -S amf-amdgpu-pro, sudo pacman -S libnvidia-encode ]"
+		TRANSCODE_FFMPEG_PROCESSOR="CPU"
+	fi
+
+
+	TITLE2FILE_LOCK=$( videokit::configVar TITLE2FILE LOCK );				TITLE2FILE_LOCK="$XDG_RUNTIME_DIR/$TITLE2FILE_LOCK"
+	TITLE2FILE_DEBUG=$( videokit::configVar TITLE2FILE DEBUG )
+
+	FILE2TITLE_LOCK=$( videokit::configVar FILE2TITLE LOCK );				FILE2TITLE_LOCK="$XDG_RUNTIME_DIR/$FILE2TITLE_LOCK"
+	FILE2TITLE_DEBUG=$( videokit::configVar FILE2TITLE DEBUG )
+	FILE2TITLE_TOLERANCE=$(	videokit::configVar FILE2TITLE TOLERANCE )
+
+	NO_FORCED_SUBS_LOCK=$(		videokit::configVar NO_FORCED_SUBS LOCK 	 );		NO_FORCED_SUBS_LOCK="$XDG_RUNTIME_DIR/$NO_FORCED_SUBS_LOCK"
+	NO_FORCED_SUBS_DEBUG=$(		videokit::configVar NO_FORCED_SUBS DEBUG 	 )
+	NO_FORCED_SUBS_TOLERANCE=$(	videokit::configVar NO_FORCED_SUBS TOLERANCE )
+
+}
+
+
+videokit::configVar() {
+
+	local VALUE=""
+
+	if [[ -f $CONFIG_LOCAL ]]; then
+		VALUE=$(crudini --get "$CONFIG_LOCAL" "$1" "$2")
+	elif [[ -f $CONFIG_GLOBAL ]]; then
+		cp "$CONFIG_GLOBAL" "$CONFIG_LOCAL"
+	else
+		echo "Error: Global config not found."
+		exit 1
+	fi
+
+	echo $(string::strip_quotes "$VALUE")
+
+}
+
+
+
+videokit::queue() {
+
+	ENTRY="${@:3}"
+
+	case "$1" in
+		push)
+			echo "$ENTRY" >> $2
+			;;
+		second)
+			if [[ -s "$2" ]]; then
+				awk -v newline="$ENTRY" 'NR==1 { print; print newline; next } 1' "$2" > "${2}.tmp"
+				mv "${2}.tmp" "$2"
+			else
+				echo "$ENTRY" > $2
+			fi
+			;;
+		pull)
+			if [ -f $2 ] ; then
+				head -n 1 $2
+				sed -i '1d' $2
+			fi
+			;;
+		look)
+			if [ -f $2 ] ; then
+				head -n 1 $2
+			fi
+			;;
+		queue)
+			if [ -f $2 ] ; then
+				less $2
+			fi
+			;;
+	esac
+
+}
+
+
+videokit::transcodeQueue() {
+
+	case "$1" in
+		push)
+			{
+				# Ensure queue file exists
+				[[ ! -f "$TRANSCODE_QUEUE" ]] && touch "$TRANSCODE_QUEUE"
+
+				if ! grep -Fxq "$2" "$TRANSCODE_QUEUE" ; then
+					echo "Adding '$2' to queue file $TRANSCODE_QUEUE"
+					videokit::queue push "$TRANSCODE_QUEUE" "$2"
+				else
+					echo "'$2' is already in the queue."
+					#notify-send -t 2000 "Videokit" "$2 is already in the queue"
+				fi
+				if ! pgrep -f "videokit-transcodeprocess" > /dev/null ; then
+					nohup konsole -e "videokit-transcodeprocess" 2>&1 &
+				else
+					echo "info:  videokit-transcodeprocess is already running"
+				fi
+			}
+			;;
+		second)
+			# Ensure queue file exists
+			[[ ! -f "$TRANSCODE_QUEUE" ]] && touch "$TRANSCODE_QUEUE"
+
+			# Remove if already present
+			if grep -Fxq "$2" "$TRANSCODE_QUEUE"; then
+				echo "Removing '$2' from queue before reinserting in second position"
+				sed -i "\|^$2\$|d" "$TRANSCODE_QUEUE"
+			fi
+			if ! grep -Fxq "$2" "$TRANSCODE_QUEUE" 		; then
+				videokit::queue second "$TRANSCODE_QUEUE" "$2"
+				if ! pgrep -f "videokit-transcodeprocess" 	; then  nohup konsole -e "videokit-transcodeprocess";  fi
+			fi
+			;;
+		pull)
+			/usr/bin/videokit-queue pull "$TRANSCODE_QUEUE"
+			;;
+		look)
+			/usr/bin/videokit-queue look "$TRANSCODE_QUEUE"
+			;;
+		modified)
+			stat -c %Y "$TRANSCODE_QUEUE"
+			;;
+	esac
+
+}
+
+
+videokit::resetLocks() {
+
+    echo "warning: removing lock files"
+	rm -f /tmp/videokit*lock 2>/dev/null
+	[[ -f "$TRANSCODE_LOCK" ]]		&& rm "$TRANSCODE_LOCK"
+	[[ -f "$TITLE2FILE_LOCK" ]]		&& rm "$TITLE2FILE_LOCK"
+	[[ -f "$FILE2TITLE_LOCK" ]]		&& rm "$FILE2TITLE_LOCK"
+	[[ -f "$NO_FORCED_SUBS_LOCK" ]]	&& rm "$NO_FORCED_SUBS_LOCK"
+
+}
+
+
+videokit::videoLinesGet() {
+
+	local FILE="$1"
+	mediainfo --Inform="Video;%Height%" "$FILE" 2>/dev/null | tr -d '[:space:]'
+}
+
+
+videokit::ffmpegParamsGet() {
+
+	# vars
+
+	local LINES="$1"
+	local PARAMS
+	local QUALITY
+
+
+	# quality ladder
+
+	QUALITY=$(videokit::ffmpegQualityGet "$LINES")
+
+
+	# ffmpeg parameters
+
+	TRANS_QUALITY=$( videokit::configVar TRANSCODE $QUALITY"_QUALITY" )
+	local TRANS_THREADS=$( videokit::configVar TRANSCODE $QUALITY"_THREADS" )
+	TRANS_PRESET=$(  videokit::configVar TRANSCODE $QUALITY"_PRESET"  )
+
+
+	# Choose PARAMS array based on processor
+
+	if [ "$TRANSCODE_FFMPEG_PROCESSOR" = "CPU" ]; then
+		read -r -a PARAMS <<< "$TRANSCODE_FFMPEG_PARAMS_CPU -crf $TRANS_QUALITY -preset $TRANS_PRESET"
+	elif [ "$TRANSCODE_FFMPEG_PROCESSOR" = "gpu" ]; then
+		if [ "$(gpu::brandGet)" = "AMD" ]; then
+			read -r -a PARAMS <<< "$TRANSCODE_FFMPEG_PARAMS_AMD_GPU"
+		elif [ "$(gpu::brandGet)" = "NVIDIA" ]; then
+			read -r -a PARAMS <<< "$TRANSCODE_FFMPEG_PARAMS_NVIDIA_GPU"
+		elif [ "$(gpu::brandGet)" = "Intel" ]; then
+			read -r -a PARAMS <<< "$TRANSCODE_FFMPEG_PARAMS_INTEL_GPU"
+		fi
+	fi
+
+
+	FFMPEG_PARAMS=( "${PARAMS[@]}" )
+}
+
+
+videokit::ffmpegVersionGet() {
+
+	ffmpeg -v 0 -version | awk 'NR==1 {print $3}'
+}
+
+
+videokit::ffmpegQualityGet() {
+
+	# vars
+
+	LINES="$1"
+
+	# quality ladder
+
+	if   [ "$LINES" -le $( videokit::configVar QUALITY STANDARD )  ]; then QUALITY="STANDARD"
+	elif [ "$LINES" -le $( videokit::configVar QUALITY 720P     )  ]; then QUALITY="720P"
+	elif [ "$LINES" -le $( videokit::configVar QUALITY 1080P    )  ]; then QUALITY="1080P"
+	elif [ "$LINES" -le $( videokit::configVar QUALITY 2160P    )  ]; then QUALITY="2160P"
+	else  					                 	   						   QUALITY="MAX"
+	fi
+
+	echo "$QUALITY"
+}
+
+
+videokit::transcodeFile() {
+
+	APP_NAME="videokit-transcodeFile"
+	APP_VERSION="0.3.0"
+	APP_AUTHOR="Tom Brown"
+	APP_YEAR="2025"
+	APP_LICENSE="GPLv3"
+	APP_DESC="Transcode file"
+
+	app::masthead "$APP_NAME" "$APP_VERSION" "$APP_AUTHOR" "$APP_YEAR" "$APP_LICENSE" "$APP_DESC"
+
+
+	# params
+
+	local VID_FILENAME="$1"
+	local VID_DESTINATION="$2"
+	shift 2
+	local FFMPEG_PARAMS=("$@")
+
+
+
+	# get source file and strip trailing spaces
+
+	VID_FILENAME="${VID_FILENAME%"${VID_FILENAME##*[![:space:]]}"}"
+
+
+	# process the file
+
+	echo >&2 "info:  transcoding file [$VID_FILENAME]"
+	echo >&2 "info:  output file [$VID_DESTINATION]"
+	echo >&2 "info:  ffmpeg parameters [${FFMPEG_PARAMS[@]}]"
+	echo
+	systemd-inhibit --why="Encoding video" nice -n 19 ffmpeg -y -loglevel error -stats -hide_banner -i "$VID_FILENAME" "${FFMPEG_PARAMS[@]}" "$VID_DESTINATION"
+	echo
+
+}
+
+
+videokit::preflight() {
+
+	video::ffmpegIsInstalled          && echo "info:  ffmpeg is installed"          || echo "error: ffmpeg is not installed but is required for videokit-kde"
+
+	video::supportffmpegCPUEncodeHEVC && echo "info:  x265 CPU encode is supported" || echo "error: x265 CPU encode is not supported on this system (unless you plan to use another codec, x265 is needed)"
+
+	gpu::supportEncodeHEVC            && echo "info:  x265 GPU encode is supported" || echo "error: x265 GPU encode is not supported on this system"
+
+	#system::notifyMultipleInstalled temperclone powerstat mediainfo inotifywait
+
+	if ! system::notifyInstalled powerstat; then
+		echo "      powerstat is needed if you want to monitor power during transcode"
+		echo
+		echo "      pacman -Sy powerstat"
+		echo
+		echo "      Don't forget the udev rule (/etc/udev/rules.d/99-rapl.rules)"
+		echo "      SUBSYSTEM==\"powercap\", KERNEL==\"intel-rapl:0\", RUN+=\"/bin/chmod o+r /sys/class/powercap/%k/energy_uj\""
+		echo
+	fi
+
+	if ! system::notifyInstalled temperclone; then
+		echo "      temperclone is needed if you want to monitor ambient temperature"
+		echo
+		echo "      Don't forget the udev rule (/etc/udev/rules.d/99-pcsensor-temper.rules)"
+		echo "      SUBSYSTEM==\"hidraw\", ATTRS{idVendor}==\"3553\", ATTRS{idProduct}==\"a001\", MODE=\"0660\", GROUP=\"plugdev\""
+		echo
+		echo "      sudo udevadm control --reload-rules; sudo udevadm trigger"
+		echo
+		echo "      if the group doesn't exist: sudo groupadd plugdev"
+		echo "      sudo usermod -aG plugdev $USER"
+		echo "      Note: logout required for the group add"
+		echo
+	fi
+
+	system::notifyInstalled mediainfo      || echo "       mediainfo is required for videokit-kde and is used to discover resolution and metadata"
+	if ! system::notifyInstalled inotifywait; then
+		echo "       inotifywait will speed up the temperature monitoring daemon exit"
+		echo
+		echo "       pacman -Sy inotify-tools"
+		echo
+	fi
+
+}
+
+
+videokit::logAnonymize() {
+    # anonymize log, if found
+
+    if [[ -f $TRANSCODE_LOG ]]; then
+        echo "info:  log file found at        $TRANSCODE_LOG"
+
+        # target anonymized file
+        TRANSCODE_ANON_LOG="${TRANSCODE_LOG%.*}-anon.log"
+
+        awk -F',' '
+        NR == 1 {
+            OFS = FS
+            for (i = 1; i <= NF; i++) {
+                if ($i == "Filename") {
+                    filename_idx = i
+                    break
+                }
+            }
+            print
+            next
+        }
+        {
+            # Preserve number of fields
+            while (NF < filename_idx) {
+                $(NF+1) = ""
+            }
+
+            original = $filename_idx
+
+            if (!(original in map)) {
+                map[original] = sprintf("Video%03d", ++count)
+            }
+
+            $filename_idx = map[original]
+
+            # Reconstruct full line from fields (even if empty at end)
+            line = $1
+            for (i = 2; i <= NF; i++) {
+                line = line OFS $i
+            }
+
+            print line
+        }
+        ' "$TRANSCODE_LOG" > "$TRANSCODE_ANON_LOG"
+
+        echo "info:  anonymized log saved to  $TRANSCODE_ANON_LOG"
+    else
+        echo "error: log file not found       $TRANSCODE_LOG"
+    fi
+}
+
+videokit::logRotateCrontab() {
+
+	local SCHEDULE="${1:-2 0 1 * *}"
+	local cron_line="$schedule /usr/bin/videokit-util --log-roll monthly"
+
+	( crontab -l 2>/dev/null | grep -vE 'videokit-util.*--log-roll' ; echo "$CHRON_LINE" ) | crontab -
+
+}
+
+
+videokit::logRotateCrontabRemove() {
+
+	  crontab -l 2>/dev/null | grep -vE 'videokit-util.*--log-roll' | crontab -
+
+}
+
+videokit::logRotateTrigger() {
+
+	# local vars
+
+    local LOG_NEWEST_ENTRY=$(videokit::logTranscodeNewestDate)
+	local LOG_NEWEST_ENTRY_WEEK=$(date -d "$LOG_NEWEST_ENTRY" +%G-%V)
+
+    local CURRENT_DATE=$(date +%Y-%m-%d)
+	local CURRENT_DATE_WEEK=$(date -d "$CURRENT_DATE" +%G-%V)
+
+    [[ "$DEBUG" == "true" ]] && {
+        echo "debug: transcode log rotate policy = $TRANSCODE_LOG_ROTATE_POLICY"
+        echo "debug: log newest entry = $LOG_NEWEST_ENTRY"
+        echo "debug: newest entry week = $LOG_NEWEST_ENTRY_WEEK"
+        echo "debug: current date = $CURRENT_DATE"
+        echo "debug: current week = $CURRENT_DATE_WEEK"
+    }
+
+	# rotation policy
+
+	if   [[ -z "$LOG_NEWEST_ENTRY" 																				]]; then TRIGGER=1;
+	elif [[ "$TRANSCODE_LOG_ROTATE_POLICY" == "monthly" && "${LOG_NEWEST_ENTRY:0:7}"  != "${CURRENT_DATE:0:7}"  ]]; then TRIGGER=0;
+	elif [[ "$TRANSCODE_LOG_ROTATE_POLICY" == "weekly"  && "$LOG_NEWEST_ENTRY_WEEK"	  !=  "$CURRENT_DATE_WEEK"  ]]; then TRIGGER=0;
+	elif [[ "$TRANSCODE_LOG_ROTATE_POLICY" == "daily"   && "${LOG_NEWEST_ENTRY:0:10}" != "${CURRENT_DATE:0:10}" ]]; then TRIGGER=0;
+	else																												 TRIGGER=1
+	fi
+
+
+	return $TRIGGER
+}
+
+videokit::logRotate() {
+
+    local ROTATION_POLICY="${1,,}"
+
+	case "$ROTATION_POLICY" in
+		monthly|weekly|daily)
+			;;
+		*)
+			ROTATION_POLICY=$TRANSCODE_LOG_ROTATE_POLICY
+			;;
+	esac
+
+    if [[ -f "$TRANSCODE_LOG" ]]; then
+        # key directories
+        local TRANSCODE_LOG_DIR
+        TRANSCODE_LOG_DIR=$(dirname "$TRANSCODE_LOG")
+        local ARCHIVE_DIR="$TRANSCODE_LOG_DIR/Archive"
+
+        # create the archive dir, as necessary
+        mkdir -p "$ARCHIVE_DIR"
+
+        # Determine archive filename based on rotation policy
+        local ARCHIVE_TIMESTAMP=""
+        local NEWEST_LOG_ENTRY
+        NEWEST_LOG_ENTRY=$(videokit::logTranscodeNewestDate)
+
+        case "$ROTATION_POLICY" in
+            monthly)
+                ARCHIVE_TIMESTAMP=$(date -d "$NEWEST_LOG_ENTRY" +%Y%m)
+                ;;
+            weekly)
+                ARCHIVE_TIMESTAMP=$(date -d "$NEWEST_LOG_ENTRY" +%G%V)
+                ;;
+            daily)
+                ARCHIVE_TIMESTAMP=$(date -d "$NEWEST_LOG_ENTRY" +%Y%m%d)
+                ;;
+        esac
+
+        # filenames
+        local BASENAME
+        BASENAME=$(basename "$TRANSCODE_LOG" .log)
+        local ARCHIVED_LOG="$ARCHIVE_DIR/${BASENAME}.${ROTATION_POLICY}.${ARCHIVE_TIMESTAMP}.log"
+
+        [[ "$DEBUG" == "true" ]] && {
+            echo "debug: transcode log file = $TRANSCODE_LOG"
+            echo "debug: transcode log dir = $TRANSCODE_LOG_DIR"
+            echo "debug: archive dir = $ARCHIVE_DIR"
+            echo "debug: newest log entry date = $NEWEST_LOG_ENTRY"
+            echo "debug: frequency = $ROTATION_POLICY"
+        }
+
+
+        # Check for existing archive
+
+        if [[ -e "$ARCHIVED_LOG.gz" || -e "$ARCHIVED_LOG" ]]; then
+			echo "error: archive file already exists: ${ARCHIVED_LOG}.gz or $ARCHIVED_LOG"
+		else
+			echo "info:  compress log and move into archive: $ARCHIVED_LOG"
+			mv "$TRANSCODE_LOG" "$ARCHIVED_LOG" && gzip "$ARCHIVED_LOG"
+		fi
+
+else
+        echo "warning: no log file found at $TRANSCODE_LOG"
+    fi
+}
+
+
+videokit::logUnrotate() {
+    local ARCHIVED_LOG="$1"
+
+    if [[ ! -f "$ARCHIVED_LOG" ]]; then
+        echo "error: archived log file not found: $ARCHIVED_LOG"
+        return 1
+    fi
+
+    # Ensure it’s a gzip file
+    if [[ "$ARCHIVED_LOG" != *.gz ]]; then
+        echo "error: archived log is not a .gz file: $ARCHIVED_LOG"
+        return 1
+    fi
+
+    # Determine the output directory (Transcode dir)
+
+    local ARCHIVE_DIR=$(dirname "$ARCHIVED_LOG")
+    local TRANSCODE_LOG_DIR=$(dirname "$TRANSCODE_LOG")
+    local FILENAME_UNCOMPRESSED=$(basename "$ARCHIVED_LOG" .gz)
+    local DEST="$TRANSCODE_LOG_DIR/$FILENAME_UNCOMPRESSED"
+
+    [[ "$DEBUG" == "true" ]] && {
+        echo "debug: archive dir = $ARCHIVE_DIR"
+        echo "debug: transcode log dir = $TRANSCODE_LOG_DIR"
+        echo "debug: extracting to = $DEST"
+    }
+
+    # Extract without removing the original archive
+    gzip -dc "$ARCHIVED_LOG" > "$DEST"
+
+    if [[ $? -eq 0 ]]; then
+        echo "info: unrotated log written to $DEST"
+    else
+        echo "error: failed to extract $ARCHIVED_LOG"
+        return 1
+    fi
+}
+
+videokit::logTranscodeNewestDate() {
+
+    if [[ "$TRANSCODE_LOG_FORMAT" == "CSV" ]]; then
+		tail -n 1 "$TRANSCODE_LOG" | awk -F',' '{split($2, a, " "); print a[1]}'
+    else
+        tail -n 1 "$TRANSCODE_LOG" | grep -Eo '[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -n 1
+    fi
+
+}
